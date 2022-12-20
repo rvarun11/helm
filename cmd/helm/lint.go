@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/lint/support"
@@ -54,6 +56,26 @@ func newLintCmd(out io.Writer) *cobra.Command {
 			if len(args) > 0 {
 				paths = args
 			}
+			vals, err := valueOpts.MergeValues(getter.All(settings))
+			if err != nil {
+				return err
+			}
+
+			cp, err := client.ChartPathOptions.LocateChart(paths[0], settings)
+			if err != nil {
+				return err
+			}
+
+			// Check chart dependencies to make sure all are present in /charts
+			chartRequested, err := loader.Load(cp)
+			if err != nil {
+				return err
+			}
+
+			cvals, err := chartutil.CoalesceValues(chartRequested, vals)
+			if err != nil {
+				return nil
+			}
 			if client.WithSubcharts {
 				for _, p := range paths {
 					filepath.Walk(filepath.Join(p, "charts"), func(path string, info os.FileInfo, err error) error {
@@ -70,17 +92,13 @@ func newLintCmd(out io.Writer) *cobra.Command {
 			}
 
 			client.Namespace = settings.Namespace()
-			vals, err := valueOpts.MergeValues(getter.All(settings))
-			if err != nil {
-				return err
-			}
 
 			var message strings.Builder
 			failed := 0
 			errorsOrWarnings := 0
 
 			for _, path := range paths {
-				result := client.Run([]string{path}, vals)
+				result := client.Run([]string{path}, cvals)
 
 				// If there is no errors/warnings and quiet flag is set
 				// go to the next chart
